@@ -5,8 +5,10 @@
 # Inutile dans l'image
 .git
 .github
+.gitattributes
 .gitignore
 .dockerignore
+deploy
 docs
 tests
 *.md
