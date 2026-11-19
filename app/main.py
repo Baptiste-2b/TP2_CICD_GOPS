@@ -18,6 +18,10 @@ class OrderIn(BaseModel):
     quantity: int = Field(gt=0)
 
 
+class StockIn(BaseModel):
+    stock: int = Field(ge=0)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "version": APP_VERSION, "commit": GIT_COMMIT}
@@ -30,19 +34,51 @@ def list_products(
 ):
     with get_conn() as conn:
         return conn.execute(
-            "SELECT id, name, price FROM products ORDER BY id LIMIT %s OFFSET %s",
+            "SELECT id, name, price, stock FROM products ORDER BY id LIMIT %s OFFSET %s",
             (limit, offset),
         ).fetchall()
+
+
+@app.put("/products/{product_id}/stock")
+def declare_stock(product_id: int, body: StockIn):
+    """Le producteur déclare le stock disponible pour un de ses produits."""
+    with get_conn() as conn:
+        product = conn.execute(
+            "UPDATE products SET stock = %s WHERE id = %s "
+            "RETURNING id, name, price, stock",
+            (body.stock, product_id),
+        ).fetchone()
+    if product is None:
+        raise HTTPException(status_code=404, detail="Produit introuvable")
+    return product
 
 
 @app.post("/orders", status_code=201)
 def create_order(order: OrderIn):
     with get_conn() as conn:
+        # FOR UPDATE verrouille la ligne du produit jusqu'à la fin de la transaction :
+        # deux commandes simultanées ne peuvent pas consommer le même stock.
         product = conn.execute(
-            "SELECT id FROM products WHERE id = %s", (order.product_id,)
+            "SELECT id, stock FROM products WHERE id = %s FOR UPDATE",
+            (order.product_id,),
         ).fetchone()
         if product is None:
             raise HTTPException(status_code=404, detail="Produit introuvable")
+
+        # stock NULL = non déclaré par le producteur : aucune limite.
+        if product["stock"] is not None:
+            if order.quantity > product["stock"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Stock insuffisant pour le produit {order.product_id} : "
+                        f"{product['stock']} disponible(s), {order.quantity} demandé(s)"
+                    ),
+                )
+            conn.execute(
+                "UPDATE products SET stock = stock - %s WHERE id = %s",
+                (order.quantity, order.product_id),
+            )
 
         return conn.execute(
             "INSERT INTO orders (product_id, quantity) VALUES (%s, %s) "
