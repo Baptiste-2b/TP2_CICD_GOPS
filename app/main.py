@@ -56,11 +56,29 @@ def declare_stock(product_id: int, body: StockIn):
 @app.post("/orders", status_code=201)
 def create_order(order: OrderIn):
     with get_conn() as conn:
+        # FOR UPDATE verrouille la ligne du produit jusqu'à la fin de la transaction :
+        # deux commandes simultanées ne peuvent pas consommer le même stock.
         product = conn.execute(
-            "SELECT id FROM products WHERE id = %s", (order.product_id,)
+            "SELECT id, stock FROM products WHERE id = %s FOR UPDATE",
+            (order.product_id,),
         ).fetchone()
         if product is None:
             raise HTTPException(status_code=404, detail="Produit introuvable")
+
+        # stock NULL = non déclaré par le producteur : aucune limite.
+        if product["stock"] is not None:
+            if order.quantity > product["stock"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Stock insuffisant pour le produit {order.product_id} : "
+                        f"{product['stock']} disponible(s), {order.quantity} demandé(s)"
+                    ),
+                )
+            conn.execute(
+                "UPDATE products SET stock = stock - %s WHERE id = %s",
+                (order.quantity, order.product_id),
+            )
 
         return conn.execute(
             "INSERT INTO orders (product_id, quantity) VALUES (%s, %s) "
