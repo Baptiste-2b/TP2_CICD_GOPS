@@ -30,7 +30,7 @@ def list_products(
 ):
     with get_conn() as conn:
         return conn.execute(
-            "SELECT id, name, price FROM products ORDER BY id LIMIT %s OFFSET %s",
+            "SELECT id, name, price, stock FROM products ORDER BY id LIMIT %s OFFSET %s",
             (limit, offset),
         ).fetchall()
 

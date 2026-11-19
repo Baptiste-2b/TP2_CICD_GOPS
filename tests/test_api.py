@@ -34,7 +34,7 @@ def test_liste_des_produits():
     assert response.status_code == 200
     produits = response.json()
     assert 0 < len(produits) <= 5
-    assert {"id", "name", "price"} <= produits[0].keys()
+    assert {"id", "name", "price", "stock"} <= produits[0].keys()
 
 
 @needs_db
