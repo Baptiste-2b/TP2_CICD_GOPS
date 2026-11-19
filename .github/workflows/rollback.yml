@@ -1,0 +1,52 @@
+name: Rollback
+
+# Retour arrière : redéploie une version déjà publiée sur GHCR (aucun rebuild).
+# Actions > Rollback > Run workflow > environnement + version (ex : v1.0.0).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environnement"
+        type: choice
+        options: [production, staging]
+        default: production
+      version:
+        description: "Version à redéployer (ex : v1.0.0)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  rollback:
+    name: rollback
+    runs-on: [self-hosted, tp2-deploy]
+    environment:
+      name: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérification du format de la version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Format attendu : vX.Y.Z" >&2; exit 1; }
+
+      - name: Connexion à GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Redéploiement de la version demandée + test de fumée
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+        run: bash deploy/deploy.sh "$ENVIRONMENT" "ghcr.io/${GITHUB_REPOSITORY,,}/api:$VERSION" "$VERSION"
