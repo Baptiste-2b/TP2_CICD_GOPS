@@ -28,13 +28,31 @@ def test_commande_quantite_invalide_refusee():
     assert response.status_code == 422
 
 
+def test_declaration_stock_negatif_refusee():
+    response = client.put("/products/1/stock", json={"stock": -1})
+    assert response.status_code == 422
+
+
 @needs_db
 def test_liste_des_produits():
     response = client.get("/products", params={"limit": 5})
     assert response.status_code == 200
     produits = response.json()
     assert 0 < len(produits) <= 5
-    assert {"id", "name", "price"} <= produits[0].keys()
+    assert {"id", "name", "price", "stock"} <= produits[0].keys()
+
+
+@needs_db
+def test_declaration_stock():
+    response = client.put("/products/2/stock", json={"stock": 25})
+    assert response.status_code == 200
+    assert response.json()["stock"] == 25
+
+
+@needs_db
+def test_declaration_stock_produit_inexistant():
+    response = client.put("/products/999999/stock", json={"stock": 10})
+    assert response.status_code == 404
 
 
 @needs_db
