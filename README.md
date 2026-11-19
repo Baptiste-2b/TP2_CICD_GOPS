@@ -1,25 +1,19 @@
 # TP2 — Pipeline CI/CD
 
-> **Carte(s) contexte tirée(s)**
->
-> | Carte | Contenu |
-> |---|---|
-> | Carte contexte | _À compléter : recopier le texte exact de la carte_ |
-> | Carte incident 1 | _À compléter si reçue (voir [docs/incidents.md](docs/incidents.md))_ |
-> | Carte incident 2 | _À compléter si reçue_ |
+> **Contexte de l'équipe :** une équipe de **2 développeurs**.
 
 Plateforme qui met en relation des producteurs avec des restaurants et des particuliers.
 Ce dépôt contient l'API, son infrastructure conteneurisée et la chaîne de livraison CI/CD
 reconstruite après l'incident d'août (14 h de commandes bloquées, version en production inconnue).
 
-## Équipe
+## Groupe de TP
 
-| Membre | Rôle |
-|---|---|
-| Baptiste | Lead dev — administrateur du dépôt |
-| _Membre 2_ | Développeur |
-| _Membre 3_ | Développeur |
-| _Membre 4_ | Développeur |
+- CERFAUX Baptiste
+- PASQUALINI Pierre
+- CHERBONNIER Aymeric
+- ORTS Matéo
+
+**Équipe incarnée :** une équipe de **2 développeurs**. Les règles et le processus du dépôt sont conçus pour ces 2 développeurs, même si les 4 membres du groupe contribuent au dépôt.
 
 ## Lancer le projet en local
 
@@ -34,7 +28,7 @@ cp .env.example .env
 docker compose up --build -d
 
 # 3. Charger les données initiales (1 200 produits)
-docker compose exec api <commande-de-seed>
+docker compose exec api python scripts/seed.py
 
 # 4. Vérifier que le service répond et quelle version tourne
 curl http://localhost:8000/health
@@ -47,8 +41,18 @@ Arrêter : `docker compose down` (ajouter `-v` pour supprimer aussi les données
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/health` | État du service + version et commit déployés |
-| GET | `/products` | Liste des produits |
-| POST | `/orders` | Création d'une commande |
+| GET | `/products` | Liste des produits (avec leur stock) |
+| PUT | `/products/{id}/stock` | Déclaration du stock d'un produit par le producteur |
+| POST | `/orders` | Création d'une commande (refusée avec un message clair si elle dépasse le stock déclaré) |
+
+## Environnements déployés
+
+| Environnement | Adresse | Déploiement |
+|---|---|---|
+| Staging | `http://localhost:8001/health` | Automatique à chaque merge sur `main` |
+| Production | `http://localhost:8000/health` | Tag `vX.Y.Z` + approbation (voir [docs/pipeline.md](docs/pipeline.md)) |
+
+Le serveur est un poste de l'équipe équipé d'un runner GitHub Actions self-hosted (voir [docs/releases/initial.md](docs/releases/initial.md)).
 
 ## Documentation
 
@@ -60,7 +64,7 @@ Arrêter : `docker compose down` (ajouter `-v` pour supprimer aussi les données
 | [docs/config/](docs/config/) | Captures de la configuration GitHub |
 | [docs/pipeline.md](docs/pipeline.md) | Conception du pipeline et procédure de retour arrière |
 | [docs/releases/](docs/releases/) | Plan de la US-42 et fiches de mise en production |
-| [docs/incidents.md](docs/incidents.md) | Journal des cartes incident |
+| [docs/incidents.md](docs/incidents.md) | Journal des incidents |
 
 ## Règles essentielles
 
