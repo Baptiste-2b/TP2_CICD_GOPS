@@ -1,0 +1,34 @@
+# Compose de déploiement (staging et production) sur le serveur.
+# Utilise une image publiée sur GHCR (pas de build) ; chaque environnement est isolé
+# par son nom de projet (tp2-staging / tp2-production) : conteneurs, réseau et base séparés.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: producteurs
+      POSTGRES_USER: producteurs
+      # Fourni par le secret GitHub de l'environnement, jamais dans le dépôt (R1)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U producteurs -d producteurs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    # Image versionnée vX.Y.Z ou main-<sha>, jamais latest (R4)
+    image: ${API_IMAGE:?API_IMAGE manquant}
+    environment:
+      DATABASE_URL: postgresql://producteurs:${POSTGRES_PASSWORD}@db:5432/producteurs
+    ports:
+      - "${API_PORT:?API_PORT manquant}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
