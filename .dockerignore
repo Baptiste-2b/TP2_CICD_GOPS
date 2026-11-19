@@ -1,0 +1,20 @@
+# Secrets : jamais dans l'image (R1)
+.env
+.env.*
+
+# Inutile dans l'image
+.git
+.github
+.gitignore
+.dockerignore
+docs
+tests
+*.md
+*.pdf
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.vscode/
+.idea/
