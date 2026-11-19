@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        # Base éphémère détruite à la fin du job : ces identifiants ne protègent rien,
+        # ce ne sont pas des secrets.
+        env:
+          POSTGRES_DB: test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installation des dépendances
+        run: pip install -r requirements-dev.txt
+
+      - name: Migrations
+        run: python scripts/migrate.py
+
+      - name: Données initiales
+        run: python scripts/seed.py
+
+      - name: Tests
+        run: pytest -v
+
+  build:
+    name: build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build de l'image (tag = SHA du commit, jamais latest)
+        run: |
+          docker build \
+            --build-arg GIT_COMMIT=${{ github.sha }} \
+            -t tp2-api:${{ github.sha }} .
