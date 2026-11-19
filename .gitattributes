@@ -1,0 +1,3 @@
+# Les scripts shell doivent garder des fins de ligne LF, même sur un poste Windows
+# (le runner self-hosted est sous Windows : un script en CRLF ne s'exécute pas dans bash).
+*.sh text eol=lf

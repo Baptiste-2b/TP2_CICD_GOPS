@@ -1,17 +1,56 @@
-name: CI
+name: CI/CD
+
+# Pipeline conçu dans docs/pipeline.md :
+#   PR      : scan de secrets -> lint -> tests -> build (sans push)
+#   main    : idem + push de l'image sur GHCR -> déploiement staging + test de fumée
+#   tag v*  : idem + approbation humaine -> déploiement production + test de fumée
+# Les jobs de déploiement tournent sur le runner self-hosted et ne se déclenchent
+# JAMAIS sur une pull request (aucun code non relu n'est exécuté sur le serveur).
 
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+    tags: ["v*"]
 
 permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------- Étape 1
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tout l'historique : aucun secret, à aucun moment (R1)
+
+      - name: Scan de secrets (gitleaks)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --verbose
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Linter (ruff)
+        run: |
+          pip install ruff==0.8.4
+          ruff check .
+
+  # ---------------------------------------------------------------- Étape 2
   test:
     name: test
+    needs: [secrets, lint]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -51,15 +90,110 @@ jobs:
       - name: Tests
         run: pytest -v
 
+  # ---------------------------------------------------------------- Étape 3
   build:
     name: build
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build de l'image (tag = SHA du commit, jamais latest)
+      - name: Nom et version de l'image (jamais latest, R4)
+        id: meta
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/api"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="$GITHUB_REF_NAME"            # ex : v1.1.0
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            VERSION="main-${GITHUB_SHA::7}"       # ex : main-a1b2c3d
+          else
+            VERSION="pr-${GITHUB_SHA::7}"
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build de l'image
         run: |
           docker build \
+            --build-arg APP_VERSION=${{ steps.meta.outputs.version }} \
             --build-arg GIT_COMMIT=${{ github.sha }} \
-            -t tp2-api:${{ github.sha }} .
+            -t ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }} .
+
+      - name: Connexion à GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publication de l'image sur GHCR
+        if: github.event_name == 'push'
+        run: docker push ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+
+  # ---------------------------------------------------------------- Étape 4
+  deploy-staging:
+    name: deploy-staging
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, tp2-deploy]
+    environment:
+      name: staging
+      url: http://localhost:8001/health
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connexion à GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Déploiement en staging + test de fumée
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: bash deploy/deploy.sh staging "$IMAGE:$VERSION" "$VERSION"
+
+  # ---------------------------------------------------------------- Étape 5
+  deploy-production:
+    name: deploy-production
+    needs: [build, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, tp2-deploy]
+    # Approbation humaine obligatoire : règle de protection de l'environnement "production"
+    environment:
+      name: production
+      url: http://localhost:8000/health
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connexion à GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Sauvegarde, migrations, déploiement en production + test de fumée
+        shell: bash
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: bash deploy/deploy.sh production "$IMAGE:$VERSION" "$VERSION"
